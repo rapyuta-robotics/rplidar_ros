@@ -20,6 +20,13 @@
 
 namespace rplidar_ros {
 
+  RPlidarNodelet::~RPlidarNodelet() {
+      work = false;
+      RPlidarDriver::DisposeDriver(&drv);
+      scan_pub.shutdown();
+      device_thread_->join();
+  }
+
   void RPlidarNodelet::onInit()
   {
     drv = NULL;
@@ -33,12 +40,16 @@ namespace rplidar_ros {
 
     ros::NodeHandle &nh = this->getNodeHandle();
     ros::NodeHandle &nh_private = this->getPrivateNodeHandle();
+    std::string frame;
     nh_private.param<std::string>("serial_port", serial_port, "/dev/ttyUSB0");
     nh_private.param<int>("serial_baudrate", serial_baudrate, 115200);
-    nh_private.param<std::string>("frame_id", frame_id, "laser_frame");
+    nh_private.param<std::string>("frame_id", frame, "laser_frame");
     nh_private.param<bool>("inverted", inverted, "false");
     nh_private.param<bool>("angle_compensate", angle_compensate, "true");
 
+    frame_id = nh.getNamespace() + "/" + frame;
+
+    /// @todo in HWIL it freezes here sometimes.
     res = RPlidarNodelet::init_driver(serial_port, serial_baudrate);
     if (res < 0)
     {
@@ -49,7 +60,7 @@ namespace rplidar_ros {
     else
     {
       initialised = true;
-
+      work = true;
 
       stop_motor_service = nh_private.advertiseService("stop_motor", &RPlidarNodelet::stop_motor, this);
       start_motor_service = nh_private.advertiseService("start_motor", &RPlidarNodelet::start_motor, this);
@@ -58,16 +69,15 @@ namespace rplidar_ros {
 
       scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
 
-      device_thread_ = boost::shared_ptr< boost::thread >
+      device_thread_ = boost::shared_ptr<boost::thread>
         (new boost::thread(boost::bind(&RPlidarNodelet::devicePoll, this)));
     }
   }
 
   void RPlidarNodelet::devicePoll()
   {
-    while(ros::ok())
+    while(ros::ok() && work)
     {
-
       if (initialised)
       {
         boost::mutex::scoped_lock lock(mutex_);
@@ -130,8 +140,6 @@ namespace rplidar_ros {
         }
       }
     }
-    // done!
-    RPlidarDriver::DisposeDriver(&drv);
   }
 
   void RPlidarNodelet::read_scan()
@@ -145,75 +153,73 @@ namespace rplidar_ros {
     end_scan_time = ros::Time::now();
     scan_duration = (end_scan_time - start_scan_time).toSec() * 1e-3;
 
-    if (op_result == RESULT_OK) {
-        op_result = drv->ascendScanData(nodes, count);
+    if (work) {
+        if ( op_result == RESULT_OK) {
+            op_result = drv->ascendScanData(nodes, count);
 
-        float angle_min = DEG2RAD(0.0f);
-        float angle_max = DEG2RAD(359.0f);
-        if (op_result == RESULT_OK) {
-            if (angle_compensate) {
-                const int angle_compensate_nodes_count = 360;
-                const int angle_compensate_multiple = 1;
-                int angle_compensate_offset = 0;
-                rplidar_response_measurement_node_t angle_compensate_nodes[angle_compensate_nodes_count];
-                memset(angle_compensate_nodes, 0, angle_compensate_nodes_count*sizeof(rplidar_response_measurement_node_t));
-                int i = 0, j = 0;
-                for( ; i < count; i++ ) {
-                    if (nodes[i].distance_q2 != 0) {
-                        float angle = (float)((nodes[i].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f);
-                        int angle_value = (int)(angle * angle_compensate_multiple);
-                        if ((angle_value - angle_compensate_offset) < 0) angle_compensate_offset = angle_value;
-                        for (j = 0; j < angle_compensate_multiple; j++) {
-                            angle_compensate_nodes[angle_value-angle_compensate_offset+j] = nodes[i];
-                        }
-                    }
-                }
-
-                this->publish_scan(&scan_pub, angle_compensate_nodes, angle_compensate_nodes_count,
-                         start_scan_time, scan_duration, inverted,
-                         angle_min, angle_max,
-                         frame_id);
-            } else {
-                int start_node = 0, end_node = 0;
-                int i = 0;
-                // find the first valid node and last valid node
-                while (nodes[i++].distance_q2 == 0);
-                start_node = i-1;
-                i = count -1;
-                while (nodes[i--].distance_q2 == 0);
-                end_node = i+1;
-
-                angle_min = DEG2RAD((float)(nodes[start_node].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f);
-                angle_max = DEG2RAD((float)(nodes[end_node].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f);
-
-                this->publish_scan(&scan_pub, &nodes[start_node], end_node-start_node +1,
-                         start_scan_time, scan_duration, inverted,
-                         angle_min, angle_max,
-                         frame_id);
-           }
-      } else if (op_result == RESULT_OPERATION_FAIL) {
-            // All the data is invalid
-            // SHOULD NOT PUBLISH ANY DATA FROM here
-            // BECAUSE IT CAN CRASH THE PROGRAMS USING THE DATA
-
-            /*
             float angle_min = DEG2RAD(0.0f);
             float angle_max = DEG2RAD(359.0f);
+            if (op_result == RESULT_OK) {
+                if (angle_compensate) {
+                    const int angle_compensate_nodes_count = 360;
+                    const int angle_compensate_multiple = 1;
+                    int angle_compensate_offset = 0;
+                    rplidar_response_measurement_node_t angle_compensate_nodes[angle_compensate_nodes_count];
+                    memset(angle_compensate_nodes, 0, angle_compensate_nodes_count*sizeof(rplidar_response_measurement_node_t));
+                    int i = 0, j = 0;
+                    for( ; i < count; i++ ) {
+                        if (nodes[i].distance_q2 != 0) {
+                            float angle = (float)((nodes[i].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f);
+                            int angle_value = (int)(angle * angle_compensate_multiple);
+                            if ((angle_value - angle_compensate_offset) < 0) angle_compensate_offset = angle_value;
+                            for (j = 0; j < angle_compensate_multiple; j++) {
+                                angle_compensate_nodes[angle_value-angle_compensate_offset+j] = nodes[i];
+                            }
+                        }
+                    }
 
-            NODELET_WARN_STREAM("RPLidar: publishing invalid data; might burst! watch out..");
+                    this->publish_scan(&scan_pub, angle_compensate_nodes, angle_compensate_nodes_count,
+                             start_scan_time, scan_duration, inverted, angle_min, angle_max);
+                } else {
+                    int start_node = 0, end_node = 0;
+                    int i = 0;
+                    // find the first valid node and last valid node
+                    while (nodes[i++].distance_q2 == 0);
+                    start_node = i-1;
+                    i = count -1;
+                    while (nodes[i--].distance_q2 == 0);
+                    end_node = i+1;
 
-            this->publish_scan(&scan_pub, nodes, count,
-                         start_scan_time, scan_duration, inverted,
-                         angle_min, angle_max,
-                         frame_id);
-            */
+                    angle_min = DEG2RAD((float)(nodes[start_node].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f);
+                    angle_max = DEG2RAD((float)(nodes[end_node].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f);
+
+                    this->publish_scan(&scan_pub, &nodes[start_node], end_node-start_node +1,
+                             start_scan_time, scan_duration, inverted, angle_min, angle_max);
+               }
+          } else if (op_result == RESULT_OPERATION_FAIL) {
+                // All the data is invalid
+                // SHOULD NOT PUBLISH ANY DATA FROM here
+                // BECAUSE IT CAN CRASH THE PROGRAMS USING THE DATA
+
+                /*
+                float angle_min = DEG2RAD(0.0f);
+                float angle_max = DEG2RAD(359.0f);
+
+                NODELET_WARN_STREAM("RPLidar: publishing invalid data; might burst! watch out..");
+
+                this->publish_scan(&scan_pub, nodes, count,
+                             start_scan_time, scan_duration, inverted,
+                             angle_min, angle_max,
+                             frame_id);
+                */
+            }
+
         }
-
-    }
-    else if ( op_result == RESULT_OPERATION_TIMEOUT)
-    {
-      NODELET_WARN_STREAM("RPLidar: she's dead Jim! [timed out waiting for a full 360 scan]");
-      initialised = false;
+        else if ( op_result == RESULT_OPERATION_TIMEOUT)
+        {
+          NODELET_WARN_STREAM("RPLidar: she's dead Jim! [timed out waiting for a full 360 scan]");
+          initialised = false;
+        }
     }
   }
 
@@ -221,8 +227,7 @@ namespace rplidar_ros {
                     rplidar_response_measurement_node_t *nodes,
                     size_t node_count, ros::Time start,
                     double scan_time, bool inverted,
-                    float angle_min, float angle_max,
-                    std::string frame_id)
+                    float angle_min, float angle_max)
   {
       static int scan_count = 0;
 

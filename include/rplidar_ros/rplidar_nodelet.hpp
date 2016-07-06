@@ -34,8 +34,7 @@ namespace rplidar_ros {
                         rplidar_response_measurement_node_t *nodes,
                         size_t node_count, ros::Time start,
                         double scan_time, bool inverted,
-                        float angle_min, float angle_max,
-                        std::string frame_id);
+                        float angle_min, float angle_max);
     int init_driver(std::string& serial_port, int& serial_baudrate);
     bool checkRPLIDARHealth(RPlidarDriver * drv);
     bool stop_motor(std_srvs::Empty::Request &req, std_srvs::Empty::Response &res);
@@ -46,7 +45,7 @@ namespace rplidar_ros {
 
 
     RPlidarNodelet(){};
-    ~RPlidarNodelet(){};
+    ~RPlidarNodelet();
 
   private:
     RPlidarDriver * drv;//
@@ -62,6 +61,7 @@ namespace rplidar_ros {
     int serial_baudrate;
     int res;
 
+    bool work;
     boost::mutex mutex_;
     ros::Publisher scan_pub;
     ros::ServiceServer stop_motor_service;
