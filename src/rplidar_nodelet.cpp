@@ -16,7 +16,7 @@
 
 #define DEG2RAD(x) ((x)*M_PI/180.)
 
-//#gautham may be it would be better to call stop_motor always before disposing driver
+/// @todo It may be better to call start_motor/stop_motor whenever interacting with it.
 // and start_motor fro starting scan 
 namespace rplidar_ros {
 
@@ -50,9 +50,8 @@ namespace rplidar_ros {
 
     frame_id = nh.getNamespace() + "/" + frame;
 
-    /// @todo in HWIL it freezes here sometimes.
     res = RPlidarNodelet::init_driver(serial_port, serial_baudrate);
-    if (res < 0) //#gautham the brackets formatting keeps changing in the code
+    if (res < 0)
     {
       NODELET_ERROR_STREAM("Failed to initialise driver. Exiting. (Halt!)");
       //return res;
@@ -70,11 +69,8 @@ namespace rplidar_ros {
 
       scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
 
-      //#gautham can we put the thread outside the else statement so that as long as the node is active it checks 
       // if a driver becomes available
-      //#gautham why not use the boost::make_shared?
-      device_thread_ = boost::shared_ptr<boost::thread>
-        (new boost::thread(boost::bind(&RPlidarNodelet::devicePoll, this)));
+      device_thread_ = boost::make_shared<boost::thread>(boost::bind(&RPlidarNodelet::devicePoll, this));
     }
   }
 
@@ -105,7 +101,6 @@ namespace rplidar_ros {
         }
         else
         {
-          //#gautham if the drv is null it enters this else but checkRPLIDARHealth doesn't have check for null driver
           if (!checkRPLIDARHealth(drv))
           {
             NODELET_INFO("Bad health. Let's better re-initialise the driver.");
@@ -127,7 +122,7 @@ namespace rplidar_ros {
             op_result = drv->stop();
             if (op_result == RESULT_OK)
             {
-              op_result = drv->startScan(); //#gautham start_motor might be better
+              op_result = drv->startScan();
               if (op_result == RESULT_OK)
               {
                 initialised = true;
@@ -202,7 +197,7 @@ namespace rplidar_ros {
                              start_scan_time, scan_duration, inverted, angle_min, angle_max);
                }
           } else if (op_result == RESULT_OPERATION_FAIL) {
-                //#gautham may we can display an error message in this case
+              ROS_WARN("Scan skipped due to erronous data.");
                 // All the data is invalid
                 // SHOULD NOT PUBLISH ANY DATA FROM here
                 // BECAUSE IT CAN CRASH THE PROGRAMS USING THE DATA
@@ -238,8 +233,7 @@ namespace rplidar_ros {
       static int scan_count = 0;
 
       // Allocate a new shared pointer for zero-copy sharing to other nodelet
-      //#gautham why not use the boost::make_shared?
-      sensor_msgs::LaserScanPtr scan_msg(new sensor_msgs::LaserScan);
+      sensor_msgs::LaserScanPtr scan_msg = boost::make_shared<sensor_msgs::LaserScan>();
 
       scan_msg->header.stamp = start;
       scan_msg->header.frame_id = frame_id;
@@ -285,11 +279,9 @@ namespace rplidar_ros {
           }
       }
 
-      // Check if the data size is not equal to 360. if not don't publish it.
-      //#gautham what do you mean by the following statement
-      // This is strict check which could to lose to see only if node_count is 0
-      // But 99% of the time RPlidar produces 360 sized data
-      if (node_count == 360) {  // Only publish when data size is 360
+      // Check if the data size is not equal to 360. If not don't publish it,
+      // but 99% of the time RPlidar produces 360 sized data
+      if (node_count == 360) {
         pub->publish(scan_msg);
       } else {
         NODELET_WARN_STREAM("RPLidar: not publishing since data count < 360 [" << node_count << "]");
@@ -329,6 +321,7 @@ namespace rplidar_ros {
       return -1;
     }
 
+    std::cout << "CHECK HEALTH" << std::endl;
     // check health...
     if (!checkRPLIDARHealth(drv))
     {
@@ -336,8 +329,8 @@ namespace rplidar_ros {
       return -1;
     }
 
-    //#gautham I would suggest to use start_motor and stop_motor when starting scan and before killing driver
     // start scan...can pass true to this to 'force' it, whatever that is
+    drv->startMotor();
     u_result start_scan_result = drv->startScan();
     if ( start_scan_result != RESULT_OK )
     {

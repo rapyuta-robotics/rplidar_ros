@@ -953,10 +953,15 @@ u_result RPlidarDriverSerialImpl::checkMotorCtrlSupport(bool & support, _u32 tim
             return ans;
         }
 
+        std::cout<< "CHECK" << std::endl;
         rplidar_ans_header_t response_header;
         if (IS_FAIL(ans = _waitResponseHeader(&response_header, timeout))) {
+            std::cout<< "FAIL" << std::endl;
+
             return ans;
         }
+        std::cout<< "DATA" << std::endl;
+
         
         // verify whether we got a correct header
         if (response_header.type != RPLIDAR_ANS_TYPE_ACC_BOARD_FLAG) {

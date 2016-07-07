@@ -22,6 +22,7 @@ using namespace rp::standalone::rplidar;
 
 namespace rplidar_ros {
 
+  /** @brief Slightly improved version of [Yujin's nodelet](https://github.com/yujinrobot/rplidar_ros).*/
   class RPlidarNodelet: public nodelet::Nodelet
   {
   public:
