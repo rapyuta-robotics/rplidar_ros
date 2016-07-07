@@ -146,7 +146,7 @@ bool start_motor(std_srvs::Empty::Request &req,
        return false;
   ROS_DEBUG("Start motor");
   drv->startMotor();
-  drv->startScan();;
+  drv->startScan();
   return true;
 }
 

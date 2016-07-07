@@ -16,12 +16,13 @@
 
 #define DEG2RAD(x) ((x)*M_PI/180.)
 
-
-
+//#gautham may be it would be better to call stop_motor always before disposing driver
+// and start_motor fro starting scan 
 namespace rplidar_ros {
 
   RPlidarNodelet::~RPlidarNodelet() {
       work = false;
+      drv->disconnect();
       RPlidarDriver::DisposeDriver(&drv);
       scan_pub.shutdown();
       device_thread_->join();
@@ -51,7 +52,7 @@ namespace rplidar_ros {
 
     /// @todo in HWIL it freezes here sometimes.
     res = RPlidarNodelet::init_driver(serial_port, serial_baudrate);
-    if (res < 0)
+    if (res < 0) //#gautham the brackets formatting keeps changing in the code
     {
       NODELET_ERROR_STREAM("Failed to initialise driver. Exiting. (Halt!)");
       //return res;
@@ -69,6 +70,9 @@ namespace rplidar_ros {
 
       scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
 
+      //#gautham can we put the thread outside the else statement so that as long as the node is active it checks 
+      // if a driver becomes available
+      //#gautham why not use the boost::make_shared?
       device_thread_ = boost::shared_ptr<boost::thread>
         (new boost::thread(boost::bind(&RPlidarNodelet::devicePoll, this)));
     }
@@ -101,6 +105,7 @@ namespace rplidar_ros {
         }
         else
         {
+          //#gautham if the drv is null it enters this else but checkRPLIDARHealth doesn't have check for null driver
           if (!checkRPLIDARHealth(drv))
           {
             NODELET_INFO("Bad health. Let's better re-initialise the driver.");
@@ -122,7 +127,7 @@ namespace rplidar_ros {
             op_result = drv->stop();
             if (op_result == RESULT_OK)
             {
-              op_result = drv->startScan();
+              op_result = drv->startScan(); //#gautham start_motor might be better
               if (op_result == RESULT_OK)
               {
                 initialised = true;
@@ -197,6 +202,7 @@ namespace rplidar_ros {
                              start_scan_time, scan_duration, inverted, angle_min, angle_max);
                }
           } else if (op_result == RESULT_OPERATION_FAIL) {
+                //#gautham may we can display an error message in this case
                 // All the data is invalid
                 // SHOULD NOT PUBLISH ANY DATA FROM here
                 // BECAUSE IT CAN CRASH THE PROGRAMS USING THE DATA
@@ -232,6 +238,7 @@ namespace rplidar_ros {
       static int scan_count = 0;
 
       // Allocate a new shared pointer for zero-copy sharing to other nodelet
+      //#gautham why not use the boost::make_shared?
       sensor_msgs::LaserScanPtr scan_msg(new sensor_msgs::LaserScan);
 
       scan_msg->header.stamp = start;
@@ -278,7 +285,8 @@ namespace rplidar_ros {
           }
       }
 
-      // Check if the data size is not equal to 360. if not don't publish it
+      // Check if the data size is not equal to 360. if not don't publish it.
+      //#gautham what do you mean by the following statement
       // This is strict check which could to lose to see only if node_count is 0
       // But 99% of the time RPlidar produces 360 sized data
       if (node_count == 360) {  // Only publish when data size is 360
@@ -328,6 +336,7 @@ namespace rplidar_ros {
       return -1;
     }
 
+    //#gautham I would suggest to use start_motor and stop_motor when starting scan and before killing driver
     // start scan...can pass true to this to 'force' it, whatever that is
     u_result start_scan_result = drv->startScan();
     if ( start_scan_result != RESULT_OK )
@@ -385,7 +394,7 @@ namespace rplidar_ros {
           return false;
     NODELET_DEBUG("RPLidar : starting the motor");
     drv->startMotor();
-    drv->startScan();;
+    drv->startScan();
     return true;
   }
 

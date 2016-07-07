@@ -36,9 +36,9 @@ namespace rplidar_ros {
                         double scan_time, bool inverted,
                         float angle_min, float angle_max);
     int init_driver(std::string& serial_port, int& serial_baudrate);
-    bool checkRPLIDARHealth(RPlidarDriver * drv);
+    bool checkRPLIDARHealth(RPlidarDriver *drv);
     bool stop_motor(std_srvs::Empty::Request &req, std_srvs::Empty::Response &res);
-    bool start_motor(std_srvs::Empty::Request &req,std_srvs::Empty::Response &res);
+    bool start_motor(std_srvs::Empty::Request &req, std_srvs::Empty::Response &res);
     bool reset_device(std_srvs::Trigger::Request &req, std_srvs::Trigger::Response &res);
     bool reset_scan(std_srvs::Trigger::Request &req, std_srvs::Trigger::Response &res);
 
@@ -48,7 +48,7 @@ namespace rplidar_ros {
     ~RPlidarNodelet();
 
   private:
-    RPlidarDriver * drv;//
+    RPlidarDriver *drv;
     bool initialised;
     ros::Time start_scan_time;
     ros::Time end_scan_time;

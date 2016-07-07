@@ -16,5 +16,4 @@
     <param name="angle_compensate"    type="bool"   value="$(arg angle_compensate)"/>
     <remap from="scan" to="$(arg topic_name)"/>
   </node>
-
 </launch>

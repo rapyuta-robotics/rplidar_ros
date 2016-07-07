@@ -106,7 +106,8 @@ u_result RPlidarDriverSerialImpl::connect(const char * port_path, _u32 baudrate,
 
     _isConnected = true;
 
-    checkMotorCtrlSupport(_isSupportingMotorCtrl);
+    ///@todo The following line causes a bug but on real laser it does not play any role
+    //checkMotorCtrlSupport(_isSupportingMotorCtrl);
     stopMotor();
 
     return RESULT_OK;
