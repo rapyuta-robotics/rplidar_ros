@@ -30,7 +30,7 @@ catkin_package(
 
 include_directories(
   include
-  ${RPLIDAR_SDK_PATH}/include
+  ${RPLIDAR_SDK_PATH}/include/${PROJECT_NAME}
   ${RPLIDAR_SDK_PATH}/src
   ${catkin_INCLUDE_DIRS}
 )
@@ -47,6 +47,16 @@ target_link_libraries(rplidar_node rplidar_nodelet ${catkin_LIBRARIES})
 ###############################################################################
 # Installs
 ###############################################################################
+
+install(DIRECTORY include/${PROJECT_NAME}/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+  FILES_MATCHING PATTERN "*.hpp"
+  PATTERN ".svn" EXCLUDE
+)
+
+install(DIRECTORY ${RPLIDAR_SDK_PATH}/include/${PROJECT_NAME}/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+)
 
 install(TARGETS rplidar_client_demo RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 install(TARGETS rplidar_node        RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
