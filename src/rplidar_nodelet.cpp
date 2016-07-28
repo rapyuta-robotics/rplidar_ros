@@ -41,14 +41,15 @@ namespace rplidar_ros {
 
     ros::NodeHandle &nh = this->getNodeHandle();
     ros::NodeHandle &nh_private = this->getPrivateNodeHandle();
-    std::string frame;
+    std::string frame, vehicle;
     nh_private.param<std::string>("serial_port", serial_port, "/dev/ttyUSB0");
     nh_private.param<int>("serial_baudrate", serial_baudrate, 115200);
-    nh_private.param<std::string>("frame_id", frame, "laser_frame");
+    nh_private.param<std::string>("frame_id", frame, "rplidar_link");
+    nh_private.param<std::string>("vehicle", vehicle, "alpha");
     nh_private.param<bool>("inverted", inverted, "false");
     nh_private.param<bool>("angle_compensate", angle_compensate, "true");
 
-    frame_id = nh.getNamespace() + "/" + frame;
+    frame_id = vehicle + "/" + frame;
 
     res = RPlidarNodelet::init_driver(serial_port, serial_baudrate);
     if (res < 0)
