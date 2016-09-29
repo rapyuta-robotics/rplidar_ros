@@ -81,11 +81,11 @@ namespace rplidar_ros {
     {
       if (initialised)
       {
-        ros::Time start_scan_time = ros::Time::now();
+        //ros::Time start_scan_time = ros::Time::now();
         boost::mutex::scoped_lock lock(mutex_);
         this->read_scan(); // publish inside this
         ros::Time end_scan_time = ros::Time::now();
-        ROS_INFO("Time take by full laserscan: %f", (end_scan_time-start_scan_time).toSec());
+        //ROS_INFO("Time take by full laserscan: %f", (end_scan_time-start_scan_time).toSec());
       } // release mutex lock
       else
       {
@@ -156,8 +156,8 @@ namespace rplidar_ros {
     op_result = drv->grabScanData(nodes, count);
     end_scan_time = ros::Time::now();
     scan_duration = (end_scan_time - start_scan_time).toSec();// * 1e-3;
-    ROS_INFO("Scan and serial duration: %f", scan_duration);
-    ros::Time start_laserscan_time = ros::Time::now();
+    //ROS_INFO("Scan and serial duration: %f", scan_duration);
+    //ros::Time start_laserscan_time = ros::Time::now();
     if (work) {
         if ( op_result == RESULT_OK) {
             op_result = drv->ascendScanData(nodes, count);
@@ -227,8 +227,8 @@ namespace rplidar_ros {
           initialised = false;
         }
 
-        ros::Time end_laserscan_time = ros::Time::now();
-        ROS_INFO("Time take by laserscan transformation: %f", (end_laserscan_time-start_laserscan_time).toSec());
+        //ros::Time end_laserscan_time = ros::Time::now();
+        //ROS_INFO("Time take by laserscan transformation: %f", (end_laserscan_time-start_laserscan_time).toSec());
     }
   }
 
