@@ -84,7 +84,7 @@ namespace rplidar_ros {
         //ros::Time start_scan_time = ros::Time::now();
         boost::mutex::scoped_lock lock(mutex_);
         this->read_scan(); // publish inside this
-        ros::Time end_scan_time = ros::Time::now();
+        //ros::Time end_scan_time = ros::Time::now();
         //ROS_INFO("Time take by full laserscan: %f", (end_scan_time-start_scan_time).toSec());
       } // release mutex lock
       else
