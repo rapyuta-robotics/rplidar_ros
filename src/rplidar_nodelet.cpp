@@ -85,7 +85,7 @@ namespace rplidar_ros {
         boost::mutex::scoped_lock lock(mutex_);
         this->read_scan(); // publish inside this
         //ros::Time end_scan_time = ros::Time::now();
-        //ROS_INFO("Time take by full laserscan: %f", (end_scan_time-start_scan_time).toSec());
+        //ROS_INFO("Time taken by a full laserscan: %f", (end_scan_time-start_scan_time).toSec());
       } // release mutex lock
       else
       {
@@ -174,7 +174,7 @@ namespace rplidar_ros {
                     int i = 0, j = 0;
                     for( ; i < count; i++ ) {
                         if (nodes[i].distance_q2 != 0) {
-                            float angle = (float)((nodes[i].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)*0.015625); // /64.0f);
+                            float angle = (float)((nodes[i].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)*0.015625f); // /64.0f);
                             int angle_value = (int)(angle * angle_compensate_multiple);
                             if ((angle_value - angle_compensate_offset) < 0) angle_compensate_offset = angle_value;
                             for (j = 0; j < angle_compensate_multiple; j++) {
@@ -195,8 +195,8 @@ namespace rplidar_ros {
                     while (nodes[i--].distance_q2 == 0);
                     end_node = i+1;
 
-                    angle_min = DEG2RAD((float)(nodes[start_node].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)*0.015625); // /64.0f);
-                    angle_max = DEG2RAD((float)(nodes[end_node].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)*0.015625); // /64.0f);
+                    angle_min = DEG2RAD((float)(nodes[start_node].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)*0.015625f); // /64.0f);
+                    angle_max = DEG2RAD((float)(nodes[end_node].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)*0.015625f); // /64.0f);
 
                     this->publish_scan(&scan_pub, &nodes[start_node], end_node-start_node +1,
                              start_scan_time, scan_duration, inverted, angle_min, angle_max);
@@ -228,7 +228,7 @@ namespace rplidar_ros {
         }
 
         //ros::Time end_laserscan_time = ros::Time::now();
-        //ROS_INFO("Time take by laserscan transformation: %f", (end_laserscan_time-start_laserscan_time).toSec());
+        //ROS_INFO("Time taken by laserscan transformation: %f", (end_laserscan_time-start_laserscan_time).toSec());
     }
   }
 
@@ -269,7 +269,7 @@ namespace rplidar_ros {
       bool reverse_data = (!inverted && reversed) || (inverted && !reversed);
       if (!reverse_data) {
           for (size_t i = 0; i < node_count; i++) {
-              float read_value = (float) nodes[i].distance_q2*0.00025; // /4.0f/1000;
+              float read_value = (float) nodes[i].distance_q2*0.00025f; // /4.0f/1000;
               if (read_value == 0.0)
                   scan_msg->ranges[i] = std::numeric_limits<float>::infinity();
               else
@@ -278,7 +278,7 @@ namespace rplidar_ros {
           }
       } else {
           for (size_t i = 0; i < node_count; i++) {
-              float read_value = (float)nodes[i].distance_q2*0.00025; // /4.0f/1000;
+              float read_value = (float)nodes[i].distance_q2*0.00025f; // /4.0f/1000;
               if (read_value == 0.0)
                   scan_msg->ranges[node_count-1-i] = std::numeric_limits<float>::infinity();
               else
