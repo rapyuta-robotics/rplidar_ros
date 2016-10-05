@@ -1,6 +1,11 @@
 RPLIDAR ROS package
 =====================================================================
 
+RAPYUTA-ROBOTICS NOTE:
+
+The frame used corresponds to the one in the upstream version. That is, X
+along the motor of the Lidar and Z up.
+
 ROS node and test application for RPLIDAR
 
 Visit RoboPeak Website for more details about RPLIDAR.
