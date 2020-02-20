@@ -212,7 +212,11 @@ int main(int argc, char * argv[]) {
     ROS_INFO("RPLIDAR running on ROS package rplidar_ros. SDK Version:"RPLIDAR_SDK_VERSION"");
 
     u_result     op_result;
+    
+    ros::ServiceServer stop_motor_service = nh.advertiseService("stop_motor", stop_motor);
+    ros::ServiceServer start_motor_service = nh.advertiseService("start_motor", start_motor);
 
+connect:
     // create the driver instance
     if(channel_type == "tcp"){
         drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_TCP);
@@ -227,27 +231,21 @@ int main(int argc, char * argv[]) {
         return -2;
     }
     
-    ros::ServiceServer stop_motor_service = nh.advertiseService("stop_motor", stop_motor);
-    ros::ServiceServer start_motor_service = nh.advertiseService("start_motor", start_motor);
-    
-connect:
     if(channel_type == "tcp"){
         // make connection...
         if (IS_FAIL(drv->connect(tcp_ip.c_str(), (_u32)tcp_port))) {
             ROS_ERROR("Error, cannot bind to the specified serial port %s.",serial_port.c_str());
             RPlidarDriver::DisposeDriver(drv);
-            return -1;
+            goto connect;
         }
-
     }
     else{
        // make connection...
         if (IS_FAIL(drv->connect(serial_port.c_str(), (_u32)serial_baudrate))) {
             ROS_ERROR("Error, cannot bind to the specified serial port %s.",serial_port.c_str());
             RPlidarDriver::DisposeDriver(drv);
-            return -1;
+            goto connect;
         }
-
     }
     
     // get rplidar device info
@@ -379,11 +377,12 @@ connect:
                              frame_id);
             }
         } else {
-            rplidar_response_device_health_t healthinfo;
-            op_result = drv->getHealth(healthinfo);
-            if (!IS_OK(op_result)) { 
+            if (!checkRPLIDARHealth(drv)) {
+                ROS_WARN_THROTTLE(1, "RPLIDAR disconnected. Attempting reconnection.");
+                RPlidarDriver::DisposeDriver(drv);
                 goto connect;
             } 
+            ROS_WARN_THROTTLE(1, "Grab scan data failed.");
             ros::Duration(0.1).sleep();
         }
 
