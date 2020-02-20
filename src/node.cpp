@@ -236,6 +236,7 @@ connect:
         if (IS_FAIL(drv->connect(tcp_ip.c_str(), (_u32)tcp_port))) {
             ROS_ERROR("Error, cannot bind to the specified serial port %s.",serial_port.c_str());
             RPlidarDriver::DisposeDriver(drv);
+            ros::Duration(1).sleep();
             goto connect;
         }
     }
@@ -244,6 +245,7 @@ connect:
         if (IS_FAIL(drv->connect(serial_port.c_str(), (_u32)serial_baudrate))) {
             ROS_ERROR("Error, cannot bind to the specified serial port %s.",serial_port.c_str());
             RPlidarDriver::DisposeDriver(drv);
+            ros::Duration(1).sleep();
             goto connect;
         }
     }
@@ -380,10 +382,10 @@ connect:
             if (!checkRPLIDARHealth(drv)) {
                 ROS_WARN_THROTTLE(1, "RPLIDAR disconnected. Attempting reconnection.");
                 RPlidarDriver::DisposeDriver(drv);
+                ros::Duration(1).sleep();
                 goto connect;
             } 
             ROS_WARN_THROTTLE(1, "Grab scan data failed.");
-            ros::Duration(0.1).sleep();
         }
 
         ros::spinOnce();
