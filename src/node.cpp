@@ -385,7 +385,6 @@ connect:
                 ros::Duration(1).sleep();
                 goto connect;
             } 
-            ROS_WARN_THROTTLE(1, "Grab scan data failed.");
         }
 
         ros::spinOnce();
