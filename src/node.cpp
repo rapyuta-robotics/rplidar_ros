@@ -379,12 +379,10 @@ connect:
                              frame_id);
             }
         } else {
-            if (!checkRPLIDARHealth(drv)) {
-                ROS_WARN_THROTTLE(1, "RPLIDAR disconnected. Attempting reconnection.");
-                RPlidarDriver::DisposeDriver(drv);
-                ros::Duration(1).sleep();
-                goto connect;
-            } 
+            ROS_WARN_THROTTLE(1, "RPLIDAR disconnected or not publishing data. Attempting reconnection.");
+            RPlidarDriver::DisposeDriver(drv);
+            ros::Duration(1).sleep();
+            goto connect;
         }
 
         ros::spinOnce();
