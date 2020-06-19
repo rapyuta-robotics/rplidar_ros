@@ -35,7 +35,12 @@
 #include "ros/ros.h"
 #include "sensor_msgs/LaserScan.h"
 #include "std_srvs/Empty.h"
+#include "diagnostic_msgs/DiagnosticArray.h"
+#include "diagnostic_msgs/DiagnosticStatus.h"
+#include "diagnostic_msgs/KeyValue.h"
 #include "rplidar.h"
+#include <functional>
+#include <sstream>
 
 #ifndef _countof
 #define _countof(_Array) (int)(sizeof(_Array) / sizeof(_Array[0]))
@@ -46,6 +51,10 @@
 using namespace rp::standalone::rplidar;
 
 RPlidarDriver * drv = NULL;
+int frame_count = 0;
+rplidar_response_device_info_t devinfo;
+rplidar_response_device_health_t healthinfo;
+std::stringstream serial_no;
 
 void publish_scan(ros::Publisher *pub,
                   rplidar_response_measurement_node_hq_t *nodes,
@@ -102,13 +111,12 @@ void publish_scan(ros::Publisher *pub,
     }
 
     pub->publish(scan_msg);
+    frame_count++;
 }
 
 bool getRPLIDARDeviceInfo(RPlidarDriver * drv)
 {
     u_result     op_result;
-    rplidar_response_device_info_t devinfo;
-
     op_result = drv->getDeviceInfo(devinfo);
     if (IS_FAIL(op_result)) {
         if (op_result == RESULT_OPERATION_TIMEOUT) {
@@ -123,6 +131,7 @@ bool getRPLIDARDeviceInfo(RPlidarDriver * drv)
     printf("RPLIDAR S/N: ");
     for (int pos = 0; pos < 16 ;++pos) {
         printf("%02X", devinfo.serialnum[pos]);
+        serial_no << std::to_string(devinfo.serialnum[pos]);
     }
     printf("\n");
     ROS_INFO("Firmware Ver: %d.%02d",devinfo.firmware_version>>8, devinfo.firmware_version & 0xFF);
@@ -133,9 +142,8 @@ bool getRPLIDARDeviceInfo(RPlidarDriver * drv)
 bool checkRPLIDARHealth(RPlidarDriver * drv)
 {
     u_result     op_result;
-    rplidar_response_device_health_t healthinfo;
     op_result = drv->getHealth(healthinfo);
-    if (IS_OK(op_result)) { 
+    if (IS_OK(op_result)) {
         ROS_INFO("RPLidar health status : %d", healthinfo.status);
         if (healthinfo.status == RPLIDAR_STATUS_ERROR) {
             ROS_ERROR("Error, rplidar internal error detected. Please reboot the device to retry.");
@@ -170,7 +178,7 @@ bool start_motor(std_srvs::Empty::Request &req,
   {
       ROS_DEBUG("Start motor");
       u_result ans=drv->startMotor();
-  
+
       ans=drv->startScan(0,1);
    }
    else ROS_INFO("lost connection");
@@ -182,9 +190,30 @@ static float getAngle(const rplidar_response_measurement_node_hq_t& node)
     return node.angle_z_q14 * 90.f / 16384.f;
 }
 
+void publish_diagnose(const ros::TimerEvent& event, ros::Publisher& pub) {
+
+    const float fps = static_cast<float>(frame_count) / static_cast<float>(event.current_real.toSec() - event.last_real.toSec());
+    diagnostic_msgs::DiagnosticArray msg;
+    msg.header = std_msgs::Header();
+    msg.header.stamp = event.current_real;
+    diagnostic_msgs::DiagnosticStatus stat;
+    stat.name = "rplidar Status";
+    stat.hardware_id = serial_no.str();
+    diagnostic_msgs::KeyValue freq;
+    freq.key = "Frequency (HZ)";
+    freq.value = std::to_string(fps);
+    stat.values.push_back(freq);
+    freq.key = "Error Code";
+    freq.value = std::to_string(healthinfo.error_code);
+    stat.values.push_back(freq);
+    msg.status.push_back(stat);
+    pub.publish(msg);
+    frame_count = 0;
+}
+
 int main(int argc, char * argv[]) {
     ros::init(argc, argv, "rplidar_node");
-    
+
     std::string channel_type;
     std::string tcp_ip;
     std::string serial_port;
@@ -198,11 +227,14 @@ int main(int argc, char * argv[]) {
     std::string scan_mode;
     ros::NodeHandle nh;
     ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
+    ros::Publisher diagnostic_pub = nh.advertise<diagnostic_msgs::DiagnosticArray>("/diagnostics", 1);
+    auto func = std::bind(publish_diagnose, std::placeholders::_1, diagnostic_pub);
+    ros::Timer timer = nh.createTimer(ros::Duration(1.0), func);
     ros::NodeHandle nh_private("~");
     nh_private.param<std::string>("channel_type", channel_type, "serial");
-    nh_private.param<std::string>("tcp_ip", tcp_ip, "192.168.0.7"); 
+    nh_private.param<std::string>("tcp_ip", tcp_ip, "192.168.0.7");
     nh_private.param<int>("tcp_port", tcp_port, 20108);
-    nh_private.param<std::string>("serial_port", serial_port, "/dev/ttyUSB0"); 
+    nh_private.param<std::string>("serial_port", serial_port, "/dev/ttyUSB0");
     nh_private.param<int>("serial_baudrate", serial_baudrate, 115200/*256000*/);//ros run for A1 A2, change to 256000 if A3
     nh_private.param<std::string>("frame_id", frame_id, "laser_frame");
     nh_private.param<bool>("inverted", inverted, false);
@@ -212,7 +244,7 @@ int main(int argc, char * argv[]) {
     ROS_INFO("RPLIDAR running on ROS package rplidar_ros. SDK Version:'RPLIDAR_SDK_VERSION'");
 
     u_result     op_result;
-    
+
     ros::ServiceServer stop_motor_service = nh.advertiseService("stop_motor", stop_motor);
     ros::ServiceServer start_motor_service = nh.advertiseService("start_motor", start_motor);
 
@@ -225,12 +257,12 @@ connect:
         drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_SERIALPORT);
     }
 
-    
+
     if (!drv) {
         ROS_ERROR("Create Driver fail, exit");
         return -2;
     }
-    
+
     if(channel_type == "tcp"){
         // make connection...
         if (IS_FAIL(drv->connect(tcp_ip.c_str(), (_u32)tcp_port))) {
@@ -249,7 +281,7 @@ connect:
             goto connect;
         }
     }
-    
+
     // get rplidar device info
     if (!getRPLIDARDeviceInfo(drv)) {
         return -1;
@@ -296,7 +328,7 @@ connect:
     {
         //default frequent is 10 hz (by motor pwm value),  current_scan_mode.us_per_sample is the number of scan point per us
         angle_compensate_multiple = (int)(1000*1000/current_scan_mode.us_per_sample/10.0/360.0);
-        if(angle_compensate_multiple < 1) 
+        if(angle_compensate_multiple < 1)
           angle_compensate_multiple = 1;
         max_distance = current_scan_mode.max_distance;
         ROS_INFO("current scan mode: %s, max_distance: %.1f m, Point number: %.1fK , angle_compensate: %d",  current_scan_mode.scan_mode,
@@ -310,6 +342,7 @@ connect:
     ros::Time start_scan_time;
     ros::Time end_scan_time;
     double scan_duration;
+
     while (ros::ok()) {
         rplidar_response_measurement_node_hq_t nodes[360*8];
         size_t   count = _countof(nodes);
@@ -346,7 +379,7 @@ connect:
                             }
                         }
                     }
-  
+
                     publish_scan(&scan_pub, angle_compensate_nodes, angle_compensate_nodes_count,
                              start_scan_time, scan_duration, inverted,
                              angle_min, angle_max, max_distance,
