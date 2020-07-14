@@ -227,7 +227,7 @@ int main(int argc, char * argv[]) {
     std::string scan_mode;
     ros::NodeHandle nh;
     ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
-    ros::Publisher diagnostic_pub = nh.advertise<diagnostic_msgs::DiagnosticArray>("/diagnostics", 1);
+    ros::Publisher diagnostic_pub = nh.advertise<diagnostic_msgs::DiagnosticArray>("/rp_lidar/diagnostics", 1);
     auto func = std::bind(publish_diagnose, std::placeholders::_1, diagnostic_pub);
     ros::Timer timer = nh.createTimer(ros::Duration(1.0), func);
     ros::NodeHandle nh_private("~");
