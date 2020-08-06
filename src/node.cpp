@@ -144,7 +144,7 @@ bool checkRPLIDARHealth(RPlidarDriver * drv)
     u_result     op_result;
     op_result = drv->getHealth(healthinfo);
     if (IS_OK(op_result)) {
-        ROS_INFO("RPLidar health status : %d", healthinfo.status);
+        ROS_INFO("RPLidar health status : %d , Error Code : %d", healthinfo.status, healthinfo.error_code);
         if (healthinfo.status == RPLIDAR_STATUS_ERROR) {
             ROS_ERROR("Error, rplidar internal error detected. Please reboot the device to retry.");
             return false;
@@ -199,13 +199,13 @@ void publish_diagnose(const ros::TimerEvent& event, ros::Publisher& pub) {
     diagnostic_msgs::DiagnosticStatus stat;
     stat.name = "rplidar Status";
     stat.hardware_id = serial_no.str();
-    diagnostic_msgs::KeyValue freq;
-    freq.key = "Frequency (HZ)";
-    freq.value = std::to_string(fps);
-    stat.values.push_back(freq);
-    freq.key = "Error Code";
-    freq.value = std::to_string(healthinfo.error_code);
-    stat.values.push_back(freq);
+    diagnostic_msgs::KeyValue kv;
+    kv.key = "Frequency (HZ)";
+    kv.value = std::to_string(fps);
+    stat.values.push_back(kv);
+    kv.key = "Error Code";
+    kv.value = std::to_string(healthinfo.error_code);
+    stat.values.push_back(kv);
     msg.status.push_back(stat);
     pub.publish(msg);
     frame_count = 0;
