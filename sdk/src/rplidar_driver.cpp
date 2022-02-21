@@ -1792,10 +1792,10 @@ u_result RPlidarDriverImplCommon::grabScanData(rplidar_response_measurement_node
 
     switch (_dataEvt.wait(timeout))
     {
-    case rp::hal::Event::EVENT_TIMEOUT:
+    case static_cast<unsigned long>(rp::hal::Event::EVENT_TIMEOUT):
         count = 0;
         return RESULT_OPERATION_TIMEOUT;
-    case rp::hal::Event::EVENT_OK:
+    case static_cast<unsigned long>(rp::hal::Event::EVENT_OK):
         {
             if(_cached_scan_node_hq_count == 0) return RESULT_OPERATION_TIMEOUT; //consider as timeout
 
@@ -1821,10 +1821,10 @@ u_result RPlidarDriverImplCommon::grabScanDataHq(rplidar_response_measurement_no
 {
     switch (_dataEvt.wait(timeout))
     {
-    case rp::hal::Event::EVENT_TIMEOUT:
+    case static_cast<unsigned long>(rp::hal::Event::EVENT_TIMEOUT):
         count = 0;
         return RESULT_OPERATION_TIMEOUT;
-    case rp::hal::Event::EVENT_OK:
+    case static_cast<unsigned long>(rp::hal::Event::EVENT_OK):
     {
         if (_cached_scan_node_hq_count == 0) return RESULT_OPERATION_TIMEOUT; //consider as timeout
 
