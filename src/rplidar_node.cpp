@@ -365,34 +365,27 @@ class RPlidarNode : public rclcpp::Node
         is_scanning = false;
     }
 
-public:    
-    int work_loop()
-    {        
-        init_param();
-        int ver_major = SL_LIDAR_SDK_VERSION_MAJOR;
-        int ver_minor = SL_LIDAR_SDK_VERSION_MINOR;
-        int ver_patch = SL_LIDAR_SDK_VERSION_PATCH;
-        RCLCPP_INFO(this->get_logger(),"RPLidar running on ROS2 package rplidar_ros. RPLIDAR SDK Version:%d.%d.%d",ver_major,ver_minor,ver_patch);
-    
+    /* Create the driver, connect, check the device and start scanning.
+     * Returns false (and leaves no driver) when any step fails. */
+    bool connect_and_start()
+    {
         sl_result     op_result;
         // create the driver instance
         drv = *createLidarDriver();
         if (nullptr == drv) {
-            /* don't start spinning without a driver object */
             RCLCPP_ERROR(this->get_logger(), "Failed to construct driver");
-            return -1;
+            return false;
         }
-        IChannel* _channel;
         if(channel_type == "tcp"){
-            _channel = *createTcpChannel(tcp_ip, tcp_port);
+            channel = *createTcpChannel(tcp_ip, tcp_port);
         }
         else if(channel_type == "udp"){
-            _channel = *createUdpChannel(udp_ip, udp_port);
+            channel = *createUdpChannel(udp_ip, udp_port);
         }
         else{
-            _channel = *createSerialPortChannel(serial_port, serial_baudrate);
+            channel = *createSerialPortChannel(serial_port, serial_baudrate);
         }
-        if (SL_IS_FAIL((drv)->connect(_channel))) {
+        if (SL_IS_FAIL((drv)->connect(channel))) {
             if(channel_type == "tcp"){
                 RCLCPP_ERROR(this->get_logger(),"Error, cannot connect to the ip addr  %s with the tcp port %s.",tcp_ip.c_str(),std::to_string(tcp_port).c_str());
             }
@@ -400,27 +393,31 @@ public:
                 RCLCPP_ERROR(this->get_logger(),"Error, cannot connect to the ip addr  %s with the udp port %s.",udp_ip.c_str(),std::to_string(udp_port).c_str());
             }
             else{
-                RCLCPP_ERROR(this->get_logger(),"Error, cannot bind to the specified serial port %s.",serial_port.c_str());            
+                RCLCPP_ERROR(this->get_logger(),"Error, cannot bind to the specified serial port %s.",serial_port.c_str());
             }
-            delete drv; drv = nullptr;
-            return -1;
+            disconnect();
+            return false;
         }
-        
+
         // get rplidar device info
         if (!getRPLIDARDeviceInfo(drv)) {
-            delete drv; drv = nullptr;
-            return -1;
+            disconnect();
+            return false;
         }
 
         // check health...
         if (!checkRPLIDARHealth(drv)) {
-            delete drv; drv = nullptr;
-            return -1;
+            disconnect();
+            return false;
         }
 
         sl_lidar_response_device_info_t devinfo;
         op_result = drv->getDeviceInfo(devinfo);
-        bool scan_frequency_tunning_after_scan = false;
+        if (SL_IS_FAIL(op_result)) {
+            disconnect();
+            return false;
+        }
+        scan_frequency_tunning_after_scan = false;
 
         if( (devinfo.model>>4) > LIDAR_S_SERIES_MINUM_MAJOR_ID){
             scan_frequency_tunning_after_scan = true;
@@ -433,9 +430,45 @@ public:
 
         /* start motor and scanning */
         if (!auto_standby && !this->start()) {
-            delete drv; drv = nullptr;
-            return -1;
+            disconnect();
+            return false;
         }
+        return true;
+    }
+
+    /* Delete the driver and its channel (the driver does not own the channel). */
+    void disconnect()
+    {
+        if (drv) { delete drv; drv = nullptr; }
+        if (channel) { delete channel; channel = nullptr; }
+        is_scanning = false;
+    }
+
+    /* RR: keep the node alive and retry every second until the lidar answers,
+     * instead of exiting. Services and the scan topic stay available. */
+    bool connect_with_retry(rclcpp::Executor& executor)
+    {
+        while (rclcpp::ok() && !need_exit) {
+            if (connect_and_start()) {
+                return true;
+            }
+            RCLCPP_WARN(this->get_logger(), "RPLidar not connected. Retrying in 1 s.");
+            executor.spin_some();
+            rclcpp::sleep_for(std::chrono::seconds(1));
+        }
+        return false;
+    }
+
+public:    
+    int work_loop()
+    {        
+        init_param();
+        int ver_major = SL_LIDAR_SDK_VERSION_MAJOR;
+        int ver_minor = SL_LIDAR_SDK_VERSION_MINOR;
+        int ver_patch = SL_LIDAR_SDK_VERSION_PATCH;
+        RCLCPP_INFO(this->get_logger(),"RPLidar running on ROS2 package rplidar_ros. RPLIDAR SDK Version:%d.%d.%d",ver_major,ver_minor,ver_patch);
+    
+        sl_result     op_result;
 
         scan_pub = this->create_publisher<sensor_msgs::msg::LaserScan>(topic_name, rclcpp::QoS(rclcpp::KeepLast(10)));
 
@@ -444,10 +477,12 @@ public:
         start_motor_service = this->create_service<std_srvs::srv::Empty>("start_motor", 
                                 std::bind(&RPlidarNode::start_motor,this,std::placeholders::_1,std::placeholders::_2));
 
-        //drv->setMotorSpeed();
-
         rclcpp::executors::SingleThreadedExecutor executor;
         executor.add_node(shared_from_this());
+
+        if (!connect_with_retry(executor)) {
+            return 0;
+        }
 
         rclcpp::Time start_scan_time;
         rclcpp::Time end_scan_time;
@@ -541,16 +576,29 @@ public:
                                 angle_min, angle_max, max_distance,
                                 frame_id);
                 }
+            } else if (is_scanning) {
+                // RR: a timeout or read error while scanning means the lidar was unplugged or
+                // stopped sending. Reconnect, as in ROS 1 rr-devel (stop_motor clears is_scanning).
+                RCLCPP_WARN(this->get_logger(), "RPLidar disconnected or not publishing data (%08x). Attempting reconnection.", op_result);
+                disconnect();
+                executor.spin_some();
+                rclcpp::sleep_for(std::chrono::seconds(1));
+                if (!connect_with_retry(executor)) {
+                    break;
+                }
+                continue;
             }
 
             executor.spin_some();
         }
 
         // done!
-        drv->setMotorSpeed(0);
-        drv->stop();
-        RCLCPP_INFO(this->get_logger(),"Stop motor");
-        if (drv) { delete drv;  drv = nullptr; }
+        if (drv) {
+            drv->setMotorSpeed(0);
+            drv->stop();
+            RCLCPP_INFO(this->get_logger(),"Stop motor");
+        }
+        disconnect();
         return 0;
     }
 
@@ -580,6 +628,8 @@ public:
     bool is_scanning = false;
 
     ILidarDriver *drv = nullptr;
+    IChannel *channel = nullptr;
+    bool scan_frequency_tunning_after_scan = false;
 };
 
 void ExitHandler(int sig)
