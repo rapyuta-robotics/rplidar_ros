@@ -10,8 +10,7 @@
   <author email="ros@slamtec.com">Slamtec ROS Maintainer</author>
   <license>BSD</license>
 
-  <buildtool_depend>ament_cmake_auto</buildtool_depend>
-  <buildtool_depend>ament_cmake_ros</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
 
   <build_depend>rclcpp</build_depend>
   <!-- <build_depend>rosconsole</build_depend> -->

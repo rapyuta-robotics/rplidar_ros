@@ -446,6 +446,9 @@ public:
 
         //drv->setMotorSpeed();
 
+        rclcpp::executors::SingleThreadedExecutor executor;
+        executor.add_node(shared_from_this());
+
         rclcpp::Time start_scan_time;
         rclcpp::Time end_scan_time;
         double scan_duration;
@@ -540,7 +543,7 @@ public:
                 }
             }
 
-            rclcpp::spin_some(shared_from_this());
+            executor.spin_some();
         }
 
         // done!
