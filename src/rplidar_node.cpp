@@ -35,6 +35,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <std_srvs/srv/empty.hpp>
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
+#include "rplidar_diagnostics.hpp"
 #include "sl_lidar.h"
 #include "math.h"
 
@@ -128,6 +130,7 @@ class RPlidarNode : public rclcpp::Node
             sprintf(sn_str + (pos * 2),"%02X", devinfo.serialnum[pos]);
         }
         RCLCPP_INFO(this->get_logger(),"RPLidar S/N: %s",sn_str);
+        serial_number = sn_str;
         RCLCPP_INFO(this->get_logger(),"Firmware Ver: %d.%02d",devinfo.firmware_version>>8, devinfo.firmware_version & 0xFF);
         RCLCPP_INFO(this->get_logger(),"Hardware Rev: %d",(int)devinfo.hardware_version);
         return true;
@@ -139,7 +142,8 @@ class RPlidarNode : public rclcpp::Node
         sl_lidar_response_device_health_t healthinfo;
         op_result = drv->getHealth(healthinfo);
         if (SL_IS_OK(op_result)) { 
-            RCLCPP_INFO(this->get_logger(),"RPLidar health status : %d", healthinfo.status);
+            health_error_code = healthinfo.error_code;
+            RCLCPP_INFO(this->get_logger(),"RPLidar health status : %d, error code : %d", healthinfo.status, health_error_code);
             switch (healthinfo.status) {
                 case SL_LIDAR_STATUS_OK:
                     RCLCPP_INFO(this->get_logger(),"RPLidar health status : OK.");
@@ -283,6 +287,7 @@ class RPlidarNode : public rclcpp::Node
         }
 
         pub->publish(*scan_msg);
+        ++published_scans;
     }
 
     bool set_scan_mode() {
@@ -436,6 +441,21 @@ class RPlidarNode : public rclcpp::Node
         return true;
     }
 
+    /* RR: publish the ROS 1 rr-devel diagnostics (scan frequency, health error code). */
+    void publish_diagnostics()
+    {
+        const auto now = std::chrono::steady_clock::now();
+        const double period_s = std::chrono::duration<double>(now - last_diagnostics_time).count();
+        last_diagnostics_time = now;
+
+        diagnostic_msgs::msg::DiagnosticArray msg;
+        msg.header.stamp = this->now();
+        msg.status.push_back(rplidar_ros::make_diagnostic_status(
+            serial_number, drv != nullptr, published_scans, period_s, health_error_code));
+        published_scans = 0;
+        diagnostics_pub->publish(msg);
+    }
+
     /* Delete the driver and its channel (the driver does not own the channel). */
     void disconnect()
     {
@@ -476,6 +496,10 @@ public:
                                 std::bind(&RPlidarNode::stop_motor,this,std::placeholders::_1,std::placeholders::_2));
         start_motor_service = this->create_service<std_srvs::srv::Empty>("start_motor", 
                                 std::bind(&RPlidarNode::start_motor,this,std::placeholders::_1,std::placeholders::_2));
+
+        diagnostics_pub = this->create_publisher<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", rclcpp::QoS(1));
+        last_diagnostics_time = std::chrono::steady_clock::now();
+        diagnostics_timer = this->create_wall_timer(std::chrono::seconds(1), [this]() { publish_diagnostics(); });
 
         rclcpp::executors::SingleThreadedExecutor executor;
         executor.add_node(shared_from_this());
@@ -606,6 +630,12 @@ public:
     rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr start_motor_service;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr stop_motor_service;
+    rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_pub;
+    rclcpp::TimerBase::SharedPtr diagnostics_timer;
+    std::chrono::steady_clock::time_point last_diagnostics_time;
+    size_t published_scans = 0;
+    std::string serial_number;
+    uint16_t health_error_code = 0;
 
     std::string channel_type;
     std::string tcp_ip;

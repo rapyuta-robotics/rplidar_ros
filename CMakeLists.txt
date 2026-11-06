@@ -46,6 +46,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(Threads REQUIRED)
 
 ################################################################################
@@ -63,19 +64,23 @@ set_target_properties(rplidar_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(rplidar_sdk PUBLIC Threads::Threads)
 
 add_executable(rplidar_node src/rplidar_node.cpp)
+target_include_directories(rplidar_node PRIVATE include)
 target_link_libraries(rplidar_node
   rplidar_sdk
   rclcpp::rclcpp
   ${std_srvs_TARGETS}
   ${sensor_msgs_TARGETS}
+  ${diagnostic_msgs_TARGETS}
 )
 
 add_executable(rplidar_composition src/rplidar_node.cpp)
+target_include_directories(rplidar_composition PRIVATE include)
 target_link_libraries(rplidar_composition
   rplidar_sdk
   rclcpp::rclcpp
   ${std_srvs_TARGETS}
   ${sensor_msgs_TARGETS}
+  ${diagnostic_msgs_TARGETS}
 )
 
 add_executable(rplidar_client src/rplidar_client.cpp)
@@ -95,6 +100,16 @@ install(
   TARGETS rplidar_node rplidar_composition rplidar_client
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
+
+################################################################################
+# Test
+################################################################################
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_diagnostics test/test_diagnostics.cpp)
+  target_include_directories(test_diagnostics PRIVATE include)
+  target_link_libraries(test_diagnostics ${diagnostic_msgs_TARGETS})
+endif()
 
 ################################################################################
 # Macro for ament package
