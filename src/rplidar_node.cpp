@@ -35,6 +35,9 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <std_srvs/srv/empty.hpp>
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
+#include "rplidar_diagnostics.hpp"
+#include "rplidar_reconnect.hpp"
 #include "sl_lidar.h"
 #include "math.h"
 
@@ -128,6 +131,7 @@ class RPlidarNode : public rclcpp::Node
             sprintf(sn_str + (pos * 2),"%02X", devinfo.serialnum[pos]);
         }
         RCLCPP_INFO(this->get_logger(),"RPLidar S/N: %s",sn_str);
+        serial_number = sn_str;
         RCLCPP_INFO(this->get_logger(),"Firmware Ver: %d.%02d",devinfo.firmware_version>>8, devinfo.firmware_version & 0xFF);
         RCLCPP_INFO(this->get_logger(),"Hardware Rev: %d",(int)devinfo.hardware_version);
         return true;
@@ -139,7 +143,8 @@ class RPlidarNode : public rclcpp::Node
         sl_lidar_response_device_health_t healthinfo;
         op_result = drv->getHealth(healthinfo);
         if (SL_IS_OK(op_result)) { 
-            RCLCPP_INFO(this->get_logger(),"RPLidar health status : %d", healthinfo.status);
+            health_error_code = healthinfo.error_code;
+            RCLCPP_INFO(this->get_logger(),"RPLidar health status : %d, error code : %d", healthinfo.status, health_error_code);
             switch (healthinfo.status) {
                 case SL_LIDAR_STATUS_OK:
                     RCLCPP_INFO(this->get_logger(),"RPLidar health status : OK.");
@@ -176,6 +181,7 @@ class RPlidarNode : public rclcpp::Node
         RCLCPP_DEBUG(this->get_logger(), "Call to '%s'", __FUNCTION__);
         
         //RCLCPP_DEBUG(this->get_logger(),"Stop motor");
+        stop_requested = true;  // RR: stay stopped after a reconnect
         this->stop();
         //drv->setMotorSpeed(0);
         return true;
@@ -194,7 +200,16 @@ class RPlidarNode : public rclcpp::Node
             return false;
         }
         RCLCPP_DEBUG(this->get_logger(), "Call to '%s'", __FUNCTION__);
-        return this->start();
+        stop_requested = false;
+        if (this->start()) {
+            return true;
+        }
+        // RR: the lidar may have been unplugged while stopped. The work loop reconnects (and
+        // starts) it; not here, because this callback runs inside the loop's spin_some().
+        if (drv) {
+            start_failed = true;
+        }
+        return false;
 
 #if 0
         if(!drv)
@@ -283,6 +298,7 @@ class RPlidarNode : public rclcpp::Node
         }
 
         pub->publish(*scan_msg);
+        ++published_scans;
     }
 
     bool set_scan_mode() {
@@ -365,34 +381,27 @@ class RPlidarNode : public rclcpp::Node
         is_scanning = false;
     }
 
-public:    
-    int work_loop()
-    {        
-        init_param();
-        int ver_major = SL_LIDAR_SDK_VERSION_MAJOR;
-        int ver_minor = SL_LIDAR_SDK_VERSION_MINOR;
-        int ver_patch = SL_LIDAR_SDK_VERSION_PATCH;
-        RCLCPP_INFO(this->get_logger(),"RPLidar running on ROS2 package rplidar_ros. RPLIDAR SDK Version:%d.%d.%d",ver_major,ver_minor,ver_patch);
-    
+    /* Create the driver, connect, check the device and start scanning.
+     * Returns false (and leaves no driver) when any step fails. */
+    bool connect_and_start()
+    {
         sl_result     op_result;
         // create the driver instance
         drv = *createLidarDriver();
         if (nullptr == drv) {
-            /* don't start spinning without a driver object */
             RCLCPP_ERROR(this->get_logger(), "Failed to construct driver");
-            return -1;
+            return false;
         }
-        IChannel* _channel;
         if(channel_type == "tcp"){
-            _channel = *createTcpChannel(tcp_ip, tcp_port);
+            channel = *createTcpChannel(tcp_ip, tcp_port);
         }
         else if(channel_type == "udp"){
-            _channel = *createUdpChannel(udp_ip, udp_port);
+            channel = *createUdpChannel(udp_ip, udp_port);
         }
         else{
-            _channel = *createSerialPortChannel(serial_port, serial_baudrate);
+            channel = *createSerialPortChannel(serial_port, serial_baudrate);
         }
-        if (SL_IS_FAIL((drv)->connect(_channel))) {
+        if (SL_IS_FAIL((drv)->connect(channel))) {
             if(channel_type == "tcp"){
                 RCLCPP_ERROR(this->get_logger(),"Error, cannot connect to the ip addr  %s with the tcp port %s.",tcp_ip.c_str(),std::to_string(tcp_port).c_str());
             }
@@ -400,27 +409,36 @@ public:
                 RCLCPP_ERROR(this->get_logger(),"Error, cannot connect to the ip addr  %s with the udp port %s.",udp_ip.c_str(),std::to_string(udp_port).c_str());
             }
             else{
-                RCLCPP_ERROR(this->get_logger(),"Error, cannot bind to the specified serial port %s.",serial_port.c_str());            
+                RCLCPP_ERROR(this->get_logger(),"Error, cannot bind to the specified serial port %s.",serial_port.c_str());
             }
-            delete drv; drv = nullptr;
-            return -1;
+            disconnect();
+            return false;
         }
-        
+
+        // RR: after a USB hiccup or a node respawn the lidar can still be in (express) scan
+        // mode, where it ignores GET_DEVICE_INFO. Send STOP first (best effort; the SDK waits
+        // 100 ms after it, the protocol asks for at least 1 ms before the next request).
+        drv->stop();
+
         // get rplidar device info
         if (!getRPLIDARDeviceInfo(drv)) {
-            delete drv; drv = nullptr;
-            return -1;
+            disconnect();
+            return false;
         }
 
         // check health...
         if (!checkRPLIDARHealth(drv)) {
-            delete drv; drv = nullptr;
-            return -1;
+            disconnect();
+            return false;
         }
 
         sl_lidar_response_device_info_t devinfo;
         op_result = drv->getDeviceInfo(devinfo);
-        bool scan_frequency_tunning_after_scan = false;
+        if (SL_IS_FAIL(op_result)) {
+            disconnect();
+            return false;
+        }
+        scan_frequency_tunning_after_scan = false;
 
         if( (devinfo.model>>4) > LIDAR_S_SERIES_MINUM_MAJOR_ID){
             scan_frequency_tunning_after_scan = true;
@@ -431,11 +449,90 @@ public:
             drv->setMotorSpeed(600);
         }
 
-        /* start motor and scanning */
-        if (!auto_standby && !this->start()) {
-            delete drv; drv = nullptr;
-            return -1;
+        /* start motor and scanning, unless stop_motor stopped it (RR) */
+        if (!auto_standby && !stop_requested && !this->start()) {
+            disconnect();
+            return false;
         }
+        start_failed = false;
+        lidar_responding = true;
+        return true;
+    }
+
+    /* RR: true when the lidar answers a health request (used while the motor is stopped). */
+    bool lidar_answers()
+    {
+        sl_lidar_response_device_health_t healthinfo;
+        if (SL_IS_FAIL(drv->getHealth(healthinfo, 500))) {
+            return false;
+        }
+        health_error_code = healthinfo.error_code;
+        return true;
+    }
+
+    /* RR: drop the driver and connect again, as ROS 1 rr-devel did on any failed grab.
+     * STOP is sent first (best effort) so the lidar is not left scanning. */
+    bool reconnect(rclcpp::Executor& executor)
+    {
+        if (drv) {
+            drv->stop();
+        }
+        disconnect();
+        executor.spin_some();
+        rclcpp::sleep_for(std::chrono::seconds(1));
+        return connect_with_retry(executor);
+    }
+
+    /* RR: publish the ROS 1 rr-devel diagnostics (scan frequency, health error code). */
+    void publish_diagnostics()
+    {
+        const auto now = std::chrono::steady_clock::now();
+        const double period_s = std::chrono::duration<double>(now - last_diagnostics_time).count();
+        last_diagnostics_time = now;
+
+        diagnostic_msgs::msg::DiagnosticArray msg;
+        msg.header.stamp = this->now();
+        msg.status.push_back(rplidar_ros::make_diagnostic_status(
+            serial_number, drv != nullptr && lidar_responding, published_scans, period_s,
+            health_error_code));
+        published_scans = 0;
+        diagnostics_pub->publish(msg);
+    }
+
+    /* Delete the driver and its channel (the driver does not own the channel). */
+    void disconnect()
+    {
+        if (drv) { delete drv; drv = nullptr; }
+        if (channel) { delete channel; channel = nullptr; }
+        is_scanning = false;
+        lidar_responding = false;
+    }
+
+    /* RR: keep the node alive and retry every second until the lidar answers,
+     * instead of exiting. Services and the scan topic stay available. */
+    bool connect_with_retry(rclcpp::Executor& executor)
+    {
+        while (rclcpp::ok() && !need_exit) {
+            if (connect_and_start()) {
+                return true;
+            }
+            RCLCPP_WARN(this->get_logger(), "RPLidar not connected. Retrying in 1 s.");
+            executor.spin_some();
+            rclcpp::sleep_for(std::chrono::seconds(1));
+        }
+        return false;
+    }
+
+public:    
+    int work_loop()
+    {        
+        init_param();
+        int ver_major = SL_LIDAR_SDK_VERSION_MAJOR;
+        int ver_minor = SL_LIDAR_SDK_VERSION_MINOR;
+        int ver_patch = SL_LIDAR_SDK_VERSION_PATCH;
+        RCLCPP_INFO(this->get_logger(),"RPLidar running on ROS2 package rplidar_ros. RPLIDAR SDK Version:%d.%d.%d",ver_major,ver_minor,ver_patch);
+    
+        sl_result     op_result;
 
         scan_pub = this->create_publisher<sensor_msgs::msg::LaserScan>(topic_name, rclcpp::QoS(rclcpp::KeepLast(10)));
 
@@ -444,7 +541,16 @@ public:
         start_motor_service = this->create_service<std_srvs::srv::Empty>("start_motor", 
                                 std::bind(&RPlidarNode::start_motor,this,std::placeholders::_1,std::placeholders::_2));
 
-        //drv->setMotorSpeed();
+        diagnostics_pub = this->create_publisher<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", rclcpp::QoS(1));
+        last_diagnostics_time = std::chrono::steady_clock::now();
+        diagnostics_timer = this->create_wall_timer(std::chrono::seconds(1), [this]() { publish_diagnostics(); });
+
+        rclcpp::executors::SingleThreadedExecutor executor;
+        executor.add_node(shared_from_this());
+
+        if (!connect_with_retry(executor)) {
+            return 0;
+        }
 
         rclcpp::Time start_scan_time;
         rclcpp::Time end_scan_time;
@@ -455,7 +561,7 @@ public:
 
             if (auto_standby) {
                 if (scan_pub->get_subscription_count() > 0 && !is_scanning) {
-                    this->start();
+                    start_failed = !this->start();
                 }
                 else if (scan_pub->get_subscription_count() == 0) {
                     if (is_scanning) {
@@ -464,12 +570,29 @@ public:
                 }
             }
 
+            if (start_failed) {
+                // RR: start_motor or auto_standby could not start the scan: the driver is
+                // likely dead (unplugged while stopped). Reconnect; connect_and_start starts it.
+                RCLCPP_WARN(this->get_logger(), "RPLidar failed to start scanning. Attempting reconnection.");
+                if (!reconnect(executor)) {
+                    break;
+                }
+                continue;
+            }
+
             start_scan_time = this->now();
             op_result = drv->grabScanDataHq(nodes, count);
             end_scan_time = this->now();
             scan_duration = (end_scan_time - start_scan_time).seconds();
 
-            if (op_result == SL_RESULT_OK) {
+            const bool grab_ok = (op_result == SL_RESULT_OK);
+            if (grab_ok) {
+                lidar_responding = true;
+            } else if (rplidar_ros::needs_health_check(grab_ok, is_scanning)) {
+                lidar_responding = lidar_answers();
+            }
+
+            if (grab_ok) {
                 if(scan_frequency_tunning_after_scan) { //Set scan frequency(For Slamtec Tof lidar)
                     RCLCPP_INFO(this->get_logger(), "set lidar scan frequency to %.1f Hz(%.1f Rpm) ",scan_frequency,scan_frequency*60);
                     drv->setMotorSpeed(scan_frequency*60); //rpm 
@@ -538,16 +661,27 @@ public:
                                 angle_min, angle_max, max_distance,
                                 frame_id);
                 }
+            } else if (rplidar_ros::should_reconnect(grab_ok, is_scanning, lidar_responding)) {
+                // RR: a timeout or read error while scanning, or no health answer while stopped,
+                // means the lidar was unplugged or stopped sending. Reconnect, as in ROS 1
+                // rr-devel. A stopped but healthy lidar is left stopped.
+                RCLCPP_WARN(this->get_logger(), "RPLidar disconnected or not publishing data (%08x). Attempting reconnection.", op_result);
+                if (!reconnect(executor)) {
+                    break;
+                }
+                continue;
             }
 
-            rclcpp::spin_some(shared_from_this());
+            executor.spin_some();
         }
 
         // done!
-        drv->setMotorSpeed(0);
-        drv->stop();
-        RCLCPP_INFO(this->get_logger(),"Stop motor");
-        if (drv) { delete drv;  drv = nullptr; }
+        if (drv) {
+            drv->setMotorSpeed(0);
+            drv->stop();
+            RCLCPP_INFO(this->get_logger(),"Stop motor");
+        }
+        disconnect();
         return 0;
     }
 
@@ -555,6 +689,12 @@ public:
     rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr start_motor_service;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr stop_motor_service;
+    rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_pub;
+    rclcpp::TimerBase::SharedPtr diagnostics_timer;
+    std::chrono::steady_clock::time_point last_diagnostics_time;
+    size_t published_scans = 0;
+    std::string serial_number;
+    uint16_t health_error_code = 0;
 
     std::string channel_type;
     std::string tcp_ip;
@@ -575,8 +715,13 @@ public:
     float scan_frequency;
     /* State */
     bool is_scanning = false;
+    bool stop_requested = false;    // RR: stop_motor called, keep the motor stopped on reconnect
+    bool start_failed = false;      // RR: start_motor / auto_standby start failed, reconnect
+    bool lidar_responding = false;  // RR: last grab or health check succeeded
 
     ILidarDriver *drv = nullptr;
+    IChannel *channel = nullptr;
+    bool scan_frequency_tunning_after_scan = false;
 };
 
 void ExitHandler(int sig)
