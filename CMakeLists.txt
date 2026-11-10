@@ -109,6 +109,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_diagnostics test/test_diagnostics.cpp)
   target_include_directories(test_diagnostics PRIVATE include)
   target_link_libraries(test_diagnostics ${diagnostic_msgs_TARGETS})
+  ament_add_gtest(test_reconnect test/test_reconnect.cpp)
+  target_include_directories(test_reconnect PRIVATE include)
 endif()
 
 ################################################################################
